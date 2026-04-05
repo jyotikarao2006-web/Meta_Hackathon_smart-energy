@@ -1,0 +1,309 @@
+# ============================================================
+# openenv.yaml — Smart Energy Management RL Environment v2.0
+# OpenEnv specification v1.1
+# ============================================================
+
+name: smart-energy-management
+version: "2.0.0"
+description: >
+  A Reinforcement Learning environment simulating a smart commercial building's
+  energy management system. An AI agent controls HVAC (3 zones), battery storage,
+  and solar usage to minimise electricity costs while maintaining occupant comfort.
+  Features: dynamic real-time electricity pricing, battery degradation model,
+  stochastic weather simulation, and multi-room thermal control.
+  Episode length: 24 hours.
+
+author: "Smart Energy RL Team"
+license: MIT
+
+# ─────────────────────────────────────────────────────────────
+# OpenEnv API interface
+# ─────────────────────────────────────────────────────────────
+interface:
+  reset:
+    method: POST
+    path: /reset
+    description: >
+      Resets the environment to the start of a new 24-hour episode.
+      Randomises: battery charge (2–5 kWh), zone temperatures (20–24 °C),
+      and generates a new daily weather profile.
+    signature: "reset(seed?: int) -> ResetResponse"
+    response_schema: ResetResponse
+
+  step:
+    method: POST
+    path: /step
+    description: >
+      Advances the environment by one hour. The agent supplies hvac_setpoint
+      and battery_action; the environment returns the new state, reward,
+      done flag, and a detailed info dict.
+    signature: "step(action: EnergyAction) -> StepResult"
+    request_schema: StepRequest
+    response_schema: StepResult
+
+  state:
+    method: GET
+    path: /state
+    description: >
+      Returns the current environment state without advancing time.
+      Safe to call multiple times at the same timestep.
+    signature: "state() -> EnergyState"
+    response_schema: EnergyState
+
+  health:
+    method: GET
+    path: /health
+    description: "Liveness probe — returns {status: ok, version: 2.0.0}."
+
+  tasks:
+    method: GET
+    path: /tasks
+    description: "List all registered tasks with id, name, and difficulty."
+
+  grade:
+    method: POST
+    path: /grade
+    description: "Grade an episode given final stats. Returns score in [0, 1]."
+
+# ─────────────────────────────────────────────────────────────
+# Observation space
+# ─────────────────────────────────────────────────────────────
+observation_space:
+  type: structured
+  schema: EnergyState
+  vector_size: 7
+  fields:
+    hour:
+      type: integer
+      range: [0, 24]
+      normalized: "hour / 24.0"
+      description: "Current hour of the day (0 = midnight)"
+    day:
+      type: integer
+      range: [1, inf]
+      description: "Episode day counter"
+    indoor_temp:
+      type: float
+      unit: celsius
+      range: [10.0, 45.0]
+      normalized: "indoor_temp / 40.0"
+      description: "Office zone air temperature"
+    outdoor_temp:
+      type: float
+      unit: celsius
+      range: [10.0, 45.0]
+      normalized: "outdoor_temp / 40.0"
+    battery_level:
+      type: float
+      unit: kWh
+      range: [0.0, 10.0]
+      normalized: "battery_level / battery_capacity"
+    battery_capacity:
+      type: float
+      unit: kWh
+      nominal: 10.0
+      description: "Effective capacity after degradation"
+    battery_health:
+      type: float
+      range: [0.80, 1.0]
+      description: "Battery health fraction (1.0 = new, 0.80 = fully degraded)"
+    solar_power:
+      type: float
+      unit: kW
+      range: [0.0, 4.0]
+      normalized: "solar_power / 4.0"
+      description: "Current solar array output (weather-dependent)"
+    grid_price:
+      type: float
+      unit: USD_per_kWh
+      range: [0.05, 0.40]
+      normalized: "grid_price / 0.35"
+      description: "Dynamic real-time electricity price"
+    is_peak_hour:
+      type: boolean
+      description: "True when grid_price >= $0.25/kWh"
+    total_cost:
+      type: float
+      unit: USD
+      description: "Cumulative grid electricity cost for the current episode"
+    comfort_violations:
+      type: integer
+      description: "Zone-hours where any zone temperature was outside 20–26 °C"
+    zone_temps:
+      type: object
+      description: "Per-zone temperatures {office, server_room, lobby} in °C"
+    humidity:
+      type: float
+      unit: percent
+      range: [20.0, 95.0]
+      description: "Outdoor relative humidity"
+    wind_speed:
+      type: float
+      unit: m_per_s
+      range: [0.0, 8.0]
+
+# ─────────────────────────────────────────────────────────────
+# Action space
+# ─────────────────────────────────────────────────────────────
+action_space:
+  type: continuous
+  schema: EnergyAction
+  fields:
+    hvac_setpoint:
+      type: float
+      range: [0.0, 1.0]
+      description: "Aggregate HVAC power fraction (0=off, 1=full 3.5 kW total)"
+    battery_action:
+      type: float
+      range: [-1.0, 1.0]
+      description: "Battery control: -1=max discharge (2 kWh/hr), 0=hold, +1=max charge"
+
+# ─────────────────────────────────────────────────────────────
+# Reward design
+# ─────────────────────────────────────────────────────────────
+reward:
+  type: dense
+  description: >
+    Multi-factor continuous reward with partial-progress signals.
+    Never binary; always proportional to improvement.
+  range: "approximately -15 to +5 per step"
+  components:
+    cost_penalty:
+      formula: "reward -= hourly_cost * 10.0"
+      description: "Continuous penalty proportional to spend"
+    comfort_reward:
+      formula: "reward += (ok_zones / total_zones) * 2.0"
+      description: "Partial credit per zone in comfort range"
+    comfort_distance_penalty:
+      formula: "reward -= |T - comfort_bound| * 0.5  (per zone outside range)"
+    solar_utilisation:
+      formula: "reward += solar_used_kw * 0.4"
+    battery_strategy:
+      solar_charging_bonus: "+0.3 if charging with solar during off-peak"
+      peak_discharge_bonus: "+0.4 if discharging during peak"
+      healthy_soc_bonus:    "+0.2 if 25% <= battery_pct <= 75%"
+      health_bonus:         "+battery_health * 0.05"
+    grid_export_bonus:
+      formula: "reward += |net_export| * 0.5  (only at peak hours)"
+
+# ─────────────────────────────────────────────────────────────
+# Tasks
+# ─────────────────────────────────────────────────────────────
+tasks:
+  task1_peak_shaving:
+    name: "Peak Shaving"
+    difficulty: easy
+    score_range: [0.0, 1.0]
+    description: >
+      Keep total 24-hour grid cost low by using battery + solar to avoid
+      expensive peak-hour grid purchases. Temperature comfort is secondary.
+    grader: "tasks.task_definitions.grade_task1"
+    scoring_breakpoints:
+      - {cost_usd: 9.00, score: 0.00}
+      - {cost_usd: 6.00, score: 0.30}
+      - {cost_usd: 3.50, score: 0.70}
+      - {cost_usd: 2.20, score: 1.00}
+    comfort_penalty: "-0.02 per violation hour, capped at -0.15"
+    baseline_scores:
+      random_agent:        0.0776
+      rule_based_agent:    0.5684
+      solar_arbitrage_agent: 0.6163
+
+  task2_comfort_first:
+    name: "Comfort First"
+    difficulty: medium
+    score_range: [0.0, 1.0]
+    description: >
+      Maintain comfortable temperature in ALL zones (20–26 °C) while
+      also minimising cost. Comfort violations hard-cap the score.
+    grader: "tasks.task_definitions.grade_task2"
+    scoring:
+      with_violations: "score = max(0, 0.50 - violations * 0.05)"
+      no_violations_breakpoints:
+        - {cost_usd: 8.00, score: 0.30}
+        - {cost_usd: 4.00, score: 0.65}
+        - {cost_usd: 2.20, score: 1.00}
+    baseline_scores:
+      random_agent:        0.3106
+      rule_based_agent:    0.6233
+      solar_arbitrage_agent: 0.6541
+
+  task3_solar_arbitrage:
+    name: "Solar Arbitrage"
+    difficulty: hard
+    score_range: [0.0, 1.0]
+    description: >
+      Master all three objectives simultaneously: minimise grid cost,
+      maximise solar energy sold back to the grid, and maintain zero
+      comfort violations. Three equally weighted sub-scores.
+    grader: "tasks.task_definitions.grade_task3"
+    sub_scores:
+      cost_component:
+        weight: 0.33
+        formula: "linear: $9.00 → 0.0, $2.20 → 0.33"
+      sellback_component:
+        weight: 0.34
+        formula: "linear: 0 kWh → 0.0, 9 kWh → 0.34"
+      comfort_component:
+        weight: 0.33
+        formula: "0.33 if violations==0 else max(0, 0.33 - violations*0.04)"
+    baseline_scores:
+      random_agent:          0.4680
+      rule_based_agent:      0.5990
+      solar_arbitrage_agent: 0.8389
+
+# ─────────────────────────────────────────────────────────────
+# Environment dynamics
+# ─────────────────────────────────────────────────────────────
+dynamics:
+  episode_length_steps: 24
+  time_step_hours: 1
+
+  pricing:
+    type: dynamic_real_time
+    curve_usd_kwh: [0.08,0.07,0.07,0.08,0.09,0.10,0.12,0.15,0.28,0.32,0.30,0.22,
+                    0.18,0.16,0.15,0.16,0.20,0.28,0.35,0.30,0.22,0.16,0.12,0.09]
+    jitter: "±$0.015/kWh random each step (simulates spot market)"
+    peak_threshold_usd_kwh: 0.25
+    sellback_usd_kwh: 0.05
+
+  solar:
+    max_kw: 4.0
+    model: "Gaussian bell curve centred at 13:00"
+    cloud_factor: "stochastic daily character: clear / partly-cloudy / overcast"
+    active_hours: [6, 20]
+
+  battery:
+    nominal_capacity_kwh: 10.0
+    max_rate_kwh_per_step: 2.0
+    charge_efficiency: 0.95
+    discharge_efficiency: 0.97
+    degradation_model: "cycle counting; health ≥ 0.80 (20% max degradation)"
+    degradation_per_equivalent_cycle: 0.00003
+
+  hvac:
+    zones: [office, server_room, lobby]
+    aggregate_max_kw: 3.5
+    thermal_model: "first-order RC per zone with outdoor coupling and internal gains"
+    server_room_internal_gain_kw: 1.2
+    comfort_zone_celsius: [20.0, 26.0]
+
+  weather:
+    model: "stochastic daily character + per-step jitter"
+    outdoor_temp_range_celsius: [15.0, 42.0]
+    humidity_range_percent: [20.0, 95.0]
+    wind_speed_range_m_s: [0.0, 8.0]
+
+  base_load_kw: 1.5
+
+# ─────────────────────────────────────────────────────────────
+# Dependencies
+# ─────────────────────────────────────────────────────────────
+dependencies:
+  python: ">=3.8"
+  core:
+    - flask>=2.0.0
+    - pydantic>=2.0.0
+    - openai>=1.0.0
+  optional:
+    - pytest>=7.0.0
