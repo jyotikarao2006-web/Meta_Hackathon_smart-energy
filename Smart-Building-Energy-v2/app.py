@@ -60,7 +60,7 @@ def reset():
     if "seed" in seed:
         random.seed(int(seed["seed"]))
     state = env.reset()
-    return jsonify({"state": state_to_dict(state), "message": "Environment reset. New 24-hour episode started."}), 200
+    return jsonify(state_to_dict(state)), 200
 
 @app.route("/step", methods=["POST"])
 def step():
@@ -229,7 +229,7 @@ async function runSimulation() {
   document.getElementById('status').textContent = 'Resetting...';
   initCharts();
   const rr = await fetch('/reset',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
-  let {state} = await rr.json();
+  let state = await rr.json();
   let score=0, solarSold=0;
   document.getElementById('status').textContent = 'Running...';
   for (let step=0; step<24; step++) {

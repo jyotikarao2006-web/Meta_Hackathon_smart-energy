@@ -2,7 +2,7 @@
 title: Smart Building Energy Management RL Environment
 emoji: ⚡
 colorFrom: indigo
-colorTo: teal
+colorTo: gray
 sdk: docker
 pinned: false
 ---
