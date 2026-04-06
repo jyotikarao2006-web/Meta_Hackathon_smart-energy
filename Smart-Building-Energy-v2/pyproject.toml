@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "smart-energy-rl"
+version = "2.0.0"
+description = "Smart Building Energy Management RL Environment"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.8"
+dependencies = [
+    "flask>=2.0.0",
+    "pydantic>=2.0.0",
+    "openai>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["env*", "models*", "tasks*"]
+
+[project.scripts]
+serve = "app:app"
+infer = "inference:main"
