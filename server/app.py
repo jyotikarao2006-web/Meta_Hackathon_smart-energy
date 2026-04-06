@@ -8,41 +8,41 @@ Flask API server implementing the full OpenEnv spec:
   GET  /health     → {"status": "ok"}
   GET  /tasks      → task list
   GET  /           → interactive dashboard
-
+ 
 Launch: python app.py
 """
-
+ 
 import os
 import sys
 import json
 import random
-
+ 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
+ 
 from flask import Flask, jsonify, request, render_template_string
-
+ 
 try:
     from pydantic import ValidationError
     PYDANTIC = True
 except ImportError:
     PYDANTIC = False
-
+ 
 from env.energy_env import SmartEnergyEnv
 from models.schemas import EnergyAction, EnergyState, StepResult
 from tasks.task_definitions import TASKS, TaskStats
-
+ 
 app = Flask(__name__)
 env = SmartEnergyEnv()
-
+ 
 # ─── Helper ──────────────────────────────────────────────────────
-
+ 
 def state_to_dict(s) -> dict:
     if hasattr(s, "model_dump"):
         return s.model_dump()
     if hasattr(s, "to_dict"):
         return s.to_dict()
     return s.__dict__
-
+ 
 def result_to_dict(r) -> dict:
     return {
         "state": state_to_dict(r.state),
@@ -50,9 +50,9 @@ def result_to_dict(r) -> dict:
         "done": r.done,
         "info": r.info,
     }
-
+ 
 # ─── OpenEnv Core Endpoints ──────────────────────────────────────
-
+ 
 @app.route("/reset", methods=["POST"])
 def reset():
     """Reset the environment. Returns initial EnergyState."""
@@ -61,14 +61,14 @@ def reset():
         random.seed(int(seed["seed"]))
     state = env.reset()
     return jsonify(state_to_dict(state)), 200
-
+ 
 @app.route("/step", methods=["POST"])
 def step():
     """Advance one timestep. Body: {action: {hvac_setpoint, battery_action}}"""
     body = request.get_json(force=True, silent=True)
     if body is None:
         return jsonify({"error": "Request body must be JSON with 'action' key."}), 400
-
+ 
     raw_action = body.get("action", body)  # accept flat or nested
     try:
         if PYDANTIC:
@@ -80,10 +80,10 @@ def step():
             )
     except Exception as e:
         return jsonify({"error": f"Invalid action: {e}"}), 422
-
+ 
     result = env.step(action)
     return jsonify(result_to_dict(result)), 200
-
+ 
 @app.route("/state", methods=["GET"])
 def get_state():
     """Return current state without advancing time."""
@@ -92,20 +92,20 @@ def get_state():
         env.reset()
         s = env.state()
     return jsonify(state_to_dict(s)), 200
-
+ 
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok", "version": "2.0.0"}), 200
-
+ 
 @app.route("/tasks", methods=["GET"])
 def list_tasks():
     return jsonify([
         {"id": tid, "name": t.name, "difficulty": t.difficulty}
         for tid, t in TASKS.items()
     ]), 200
-
+ 
 # ─── Interactive Dashboard ───────────────────────────────────────
-
+ 
 DASHBOARD_HTML = """
 <!DOCTYPE html>
 <html lang="en">
@@ -268,11 +268,11 @@ initCharts();
 </body>
 </html>
 """
-
+ 
 @app.route("/", methods=["GET"])
 def dashboard():
     return render_template_string(DASHBOARD_HTML)
-
+ 
 @app.route("/grade", methods=["POST"])
 def grade():
     """Grade an episode. Body: {task_id, total_cost, comfort_violations, solar_generated, solar_sold_back, total_reward, steps}"""
@@ -293,7 +293,12 @@ def grade():
         return jsonify({"task_id": task_id, "score": score}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 422
-
+ 
 if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 7860))
+    app.run(host="0.0.0.0", port=port, debug=False)
+ 
+ 
+def main():
     port = int(os.environ.get("PORT", 7860))
     app.run(host="0.0.0.0", port=port, debug=False)

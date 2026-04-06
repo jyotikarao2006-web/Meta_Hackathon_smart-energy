@@ -211,8 +211,8 @@ docker run -e HF_TOKEN=xxx -e MODEL_NAME=gpt-4o-mini \
 ├── app.py                  # Flask API + dashboard
 ├── inference.py            # LLM agent runner
 ├── validate.py             # Smoke-test suite
-├── openenv.yaml            # OpenEnv spec v1.1
-├── pyproject.toml
+├── openenv.yaml  
+├── pyproject.toml          # OpenEnv spec v1.1
 ├── requirements.txt
 └── Dockerfile
 ```
