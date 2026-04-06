@@ -202,6 +202,9 @@ docker run -e HF_TOKEN=xxx -e MODEL_NAME=gpt-4o-mini \
 ## 📁 Project Structure
 
 ```
+├── server/           ← missing, add this
+│   ├── __init__.py
+│   └── app.py
 ├── env/
 │   └── energy_env.py       # Core environment (weather, battery, HVAC)
 ├── models/
