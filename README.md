@@ -212,6 +212,7 @@ docker run -e HF_TOKEN=xxx -e MODEL_NAME=gpt-4o-mini \
 ├── inference.py            # LLM agent runner
 ├── validate.py             # Smoke-test suite
 ├── openenv.yaml            # OpenEnv spec v1.1
+├── pyproject.toml
 ├── requirements.txt
 └── Dockerfile
 ```
